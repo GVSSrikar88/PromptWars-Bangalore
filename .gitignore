@@ -10,6 +10,13 @@ build/
 # testing
 coverage/
 
+# env files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
 # misc
 .DS_Store
 *.pem
