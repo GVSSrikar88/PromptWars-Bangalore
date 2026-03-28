@@ -1,85 +1,106 @@
-import { GoogleGenerativeAI, ChatSession } from '@google/generative-ai';
-import { NextRequest, NextResponse } from 'next/server';
-import { generateSystemPrompt, parseGeminiResponse, TriageResponse } from '@/utils/triage';
+import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { generateSystemPrompt, parseGeminiResponse, TriageResponse } from "@utils/intent";
+import { google } from "googleapis";
 
-// Initialize Gemini with safety check
-const apiKey = process.env.GEMINI_API_KEY;
-const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
-
-/**
- * Attempt to generate content with a list of fallback models.
- */
-async function generateWithFallback(prompt: string): Promise<{ text: string; modelUsed: string }> {
-  if (!genAI) throw new Error("Google Generative AI not initialized.");
-
-  // Priority order of models to try
-  const modelsToTry = [
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.0-pro'
-  ];
-
-  let lastError: any = null;
-
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`[VitalBridge] Attempting triage with model: ${modelName}`);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
-      
-      if (responseText) {
-        return { text: responseText, modelUsed: modelName };
-      }
-    } catch (err: any) {
-      console.warn(`[VitalBridge] Model ${modelName} failed: ${err.message}`);
-      lastError = err;
-      continue; // Try the next model
-    }
-  }
-
-  throw lastError || new Error("All fallback models failed to respond.");
+// --- Gemini Client ---
+function getGeminiClient() {
+  return new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 }
 
+// --- Google Translate Client ---
+const translate = google.translate("v2");
+const translateAuth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  },
+  scopes: ["https://www.googleapis.com/auth/cloud-translation"],
+});
+
+// --- Google Photos Client ---
+const photos = google.photoslibrary("v1");
+const photosAuth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  },
+  scopes: ["https://www.googleapis.com/auth/photoslibrary.appendonly"],
+});
+
+// --- Helper: Translate Prompt ---
+async function translatePrompt(prompt: string, targetLang = "en"): Promise<string> {
+  const authClient = await translateAuth.getClient();
+  const res = await translate.translations.list({
+    auth: authClient,
+    q: prompt,
+    target: targetLang,
+  });
+  return res.data.translations?.[0]?.translatedText || prompt;
+}
+
+// --- Helper: Upload Image to Google Photos ---
+async function uploadImageToPhotos(base64Image: string, fileName: string) {
+  const authClient = await photosAuth.getClient();
+  const uploadRes = await photos.mediaItems.batchCreate({
+    auth: authClient,
+    requestBody: {
+      albumId: process.env.GOOGLE_PHOTOS_ALBUM_ID,
+      newMediaItems: [
+        {
+          description: fileName,
+          simpleMediaItem: {
+            uploadToken: base64Image,
+          },
+        },
+      ],
+    },
+  });
+  return uploadRes.data;
+}
+
+// --- API Route ---
 export async function POST(req: NextRequest) {
   try {
-    const { text } = await req.json();
+    const body = await req.json();
+    const { intent, prompt, imageBase64 } = body;
 
-    if (!text) {
-      return NextResponse.json({ error: 'Payload missing "text" field.' }, { status: 400 });
+    // Step 1: Translate prompt to English
+    const translatedPrompt = await translatePrompt(prompt, "en");
+
+    // Step 2: Generate system prompt
+    const systemPrompt = generateSystemPrompt(intent, translatedPrompt);
+
+    // Step 3: Call Gemini
+    const client = getGeminiClient();
+    let resultText: string | null = null;
+
+    try {
+      const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const result = await model.generateContent(systemPrompt);
+      resultText = result.response.text();
+    } catch {
+      const fallbackModel = client.getGenerativeModel({ model: "gemini-pro" });
+      const result = await fallbackModel.generateContent(systemPrompt);
+      resultText = result.response.text();
     }
 
-    if (!genAI) {
-      return NextResponse.json({ 
-        error: 'Key Mission Failure', 
-        message: 'GEMINI_API_KEY is not configured in .env.local' 
-      }, { status: 500 });
+    // Step 4: Parse Gemini response
+    const triage: TriageResponse = parseGeminiResponse(resultText);
+
+    // Step 5: Upload image if provided
+    let photoUploadResult = null;
+    if (imageBase64) {
+      photoUploadResult = await uploadImageToPhotos(imageBase64, "intent-upload");
     }
 
-    const prompt = generateSystemPrompt(text);
-    
-    // Execute fallback logic
-    const { text: responseText, modelUsed } = await generateWithFallback(prompt);
-    
-    // Parse the unstructured text into a validated TriageResponse
-    const structuredData: TriageResponse = parseGeminiResponse(responseText);
-
-    // Attach which model was used for debug/transparency
     return NextResponse.json({
-      ...structuredData,
-      debug_metadata: { model_version: modelUsed }
+      triage,
+      translatedPrompt,
+      photoUploadResult,
     });
-
   } catch (error: any) {
-    console.error('[VitalBridge High Priority Error]:', error);
-    
-    return NextResponse.json(
-      { 
-        error: 'Triage Engine Failure', 
-        message: 'The AI Triage system is currently under heavy load or misconfigured. Please try again soon.',
-        technical_detail: error.message
-      },
-      { status: 500 }
-    );
+    console.error("Error in process-intent route:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
