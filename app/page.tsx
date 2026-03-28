@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { Activity, AlertTriangle, CheckCircle2, CloudLightning, ShieldAlert, FileText, Camera, TreePine, CloudRain, DollarSign, Stethoscope, Siren, Globe } from 'lucide-react';
+import { useMousePosition } from '@/hooks/useMousePosition';
+import KeywordBubble from '@/components/KeywordBubble';
 
 type StructuredResponse = {
   assigned_agent: string;
   scenario_type: string;
   risk_assessment: 'Critical' | 'High' | 'Medium' | 'Low';
+  key_contexts: string[];
   extracted_entities: Record<string, string>;
   action_plan: { step: string; is_urgent: boolean }[];
 };
@@ -16,6 +19,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<StructuredResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { x: mouseX, y: mouseY } = useMousePosition();
 
   const handleProcessIntent = async () => {
     if (!input.trim()) return;
@@ -139,6 +143,18 @@ export default function Home() {
             </span>
           )}
         </h2>
+
+        {/* Physics Workspace for Contextual Keywords */}
+        {result && result.key_contexts && result.key_contexts.length > 0 && (
+          <div className="keyword-container">
+            <div style={{ position: 'absolute', top: '1rem', left: '1rem', textTransform: 'uppercase', fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 800 }}>
+              Trigger Contexts (Mouse Interaction Enabled)
+            </div>
+            {result.key_contexts.map((keyword, idx) => (
+              <KeywordBubble key={idx} text={keyword} index={idx} mouseX={mouseX} mouseY={mouseY} />
+            ))}
+          </div>
+        )}
         
         {loading ? (
           <div className="loader">

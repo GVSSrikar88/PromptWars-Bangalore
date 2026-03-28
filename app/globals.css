@@ -331,3 +331,56 @@ html, body {
   from, to { border-color: transparent }
   50% { border-color: var(--accent-color); }
 }
+/* Keyword Bubbles Physics UI */
+.keyword-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 2rem;
+  justify-content: center;
+  align-items: center;
+  min-height: 150px;
+  position: relative;
+  overflow: visible;
+}
+
+.keyword-bubble {
+  padding: 0.75rem 1.5rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 15px rgba(0, 0, 10, 0.4);
+  position: relative;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  user-select: none;
+  z-index: 10;
+}
+
+.keyword-bubble:hover {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.bubble-content {
+  position: relative;
+  z-index: 2;
+}
+
+.bubble-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
+.bubble-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(circle at 10% 10%, rgba(255,255,255,0.1) 0%, transparent 80%);
+  border-radius: inherit;
+  pointer-events: none;
+}
